@@ -231,19 +231,17 @@ retryPolicy := &temporal.RetryPolicy{
 - [x] activities/compensation.go + テスト（実装完了）
 
 ### Phase 4: ワークフロー実装（TDD）
-- [x] workflows/hotel_booking_saga.go + テスト（構造の実装完了）
-  - **状況**: Sagaワークフローの本体は実装完了し、コンパイルエラーも解消済み
-  - **課題**: テストのモック設定でTemporalの引数仕様に合わせる必要あり
-    - モックの引数マッチングエラー（`anyArgs` vs 実際の引数の不一致）
-    - Temporalテストフレームワークでは`OnActivity`に正確な引数タイプを指定要
-  - **次の作業**: 
-    1. テストファイルでモック設定を正しい引数型に修正
-    2. Temporalテストフレームワークに適したモック設定の実装
-    3. 補償処理のテスト設計の見直し（現在のsaga.goの設計との整合性）
+- [x] workflows/hotel_booking_saga.go + テスト（実装完了）
+  - **状況**: Sagaワークフローの本体とテストが完全に実装完了
+  - **解決済み**: 
+    - モックの引数マッチングエラーを解決
+    - Temporalテストフレームワークに適したモック設定を実装
+    - 補償処理のテスト設計をsaga.goの設計と整合させて完了
+    - ActivityOptionsでのタイムアウト設定不足を修正
 
 ### Phase 5: エントリーポイント
-- [ ] cmd/server/main.go - アプリケーション起動
-- [ ] 最終テスト実行とリント確認
+- [x] cmd/server/main.go - アプリケーション起動
+- [x] 最終テスト実行とリント確認
 
 ## 実装メモ
 <!-- ここに実装中の気づきや課題を記録 -->

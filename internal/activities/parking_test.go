@@ -134,7 +134,7 @@ func TestParkingBookingActivity(t *testing.T) {
 			name:  "一時的エラー - 管理システム接続エラー",
 			given: ParkingBookingRequest{BookingID: "booking-connection-error", UserID: "user1", SpaceType: "standard"},
 			when:  "execute_activity",
-			then:  struct{ expectError bool; errorType string; success bool; resourceID string }{true, "temporal_error", false, ""},
+			then:  struct{ expectError bool; errorType string; success bool; resourceID string }{true, "server_error", false, ""},
 		},
 		{
 			name:  "冪等性テスト - 重複リクエスト",
@@ -179,9 +179,9 @@ func TestParkingBookingActivity(t *testing.T) {
 						!strings.Contains(errorMsg, "指定された駐車場は満車です") {
 						t.Errorf("期待されたBusinessErrorではありません: %s", errorMsg)
 					}
-				case "temporal_error":
+				case "server_error":
 					if !strings.Contains(errorMsg, "駐車場管理システムへの接続に失敗しました") {
-						t.Errorf("期待されたTemporalErrorではありません: %s", errorMsg)
+						t.Errorf("期待されたServerErrorではありません: %s", errorMsg)
 					}
 				}
 			} else {

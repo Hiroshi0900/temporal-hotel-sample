@@ -151,7 +151,6 @@ func HotelBookingSaga(ctx workflow.Context, request BookingRequest) (*BookingRes
 	if err != nil {
 		logger.Error("ディナー食材予約に失敗", "Error", err.Error())
 		result.Message = fmt.Sprintf("ディナー食材予約に失敗: %s", err.Error())
-
 		// 補償処理を実行
 		logger.Info("補償処理を開始")
 		compensations.Compensate(ctx, false) // 順次実行

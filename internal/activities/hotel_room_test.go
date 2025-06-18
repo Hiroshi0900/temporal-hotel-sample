@@ -60,7 +60,7 @@ func TestHotelRoomBookingActivity(t *testing.T) {
 			},
 		},
 		{
-			name: "一時的エラー（ネットワークエラー）",
+			name: "サーバーエラー（ネットワークエラー）",
 			given: HotelBookingRequest{
 				BookingID: "booking-network-error",
 				UserID:    "user-456",
@@ -73,7 +73,7 @@ func TestHotelRoomBookingActivity(t *testing.T) {
 				result      *HotelBookingResult
 			}{
 				expectError: true,
-				errorType:   "TemporalError",
+				errorType:   "ServerError",
 				result:      nil,
 			},
 		},
@@ -148,9 +148,9 @@ func TestHotelRoomBookingActivity(t *testing.T) {
 						!strings.Contains(errorMsg, "指定されたホテルは満室です") {
 						t.Errorf("期待されたBusinessErrorではありません: %s", errorMsg)
 					}
-				case "TemporalError":
+				case "ServerError":
 					if !strings.Contains(errorMsg, "ネットワークエラーが発生しました") {
-						t.Errorf("期待されたTemporalErrorではありません: %s", errorMsg)
+						t.Errorf("期待されたServerErrorではありません: %s", errorMsg)
 					}
 				}
 			} else {
