@@ -8,201 +8,307 @@ import (
 	"temporal-hotel-sample/internal/activities"
 )
 
-func TestHotelBookingSagaWorkflow(t *testing.T) {
-	tests := []struct {
-		name  string
-		given struct {
-			request         BookingRequest
-			activityResults map[string]error // アクティビティの結果をモック
-		}
-		when string
-		then struct {
-			expectSuccess       bool
-			compensationCalls   []string // 呼ばれるべき補償処理
-			expectedResultError bool
-		}
+// TestHotelBookingSagaWorkflow_WithMissCompensation
+// ホテル予約Sagaワークフローの包括的テスト
+// - ホテルルーム予約、ディナー食材予約、駐車場予約の順次実行
+// - 失敗時の補償処理（逆順実行）とリトライ機能のテスト
+
+// testケース
+// 正常系:
+//   - ホテルルーム、ディナー食材、駐車場の順に成功する、補償アクションは動かない
+//
+// 準異常系
+//   - ディナー食材予約で失敗するが、ホテルルームの補償アクションが1回で成功して整合性を保てる
+//   - ディナー食材予約で失敗するが、ホテルルームの補償アクションが2回失敗してから成功して整合性を保てる
+//   - 駐車場予約で失敗するが、ホテルルームとディナー食材の補償アクションが成功して整合性を保てる
+//   - 駐車場予約で失敗するが、ホテルルームとディナー食材の補償アクションが2回ずつ失敗してから成功する、最終的には整合性を保てる
+//
+// 異常系:
+//   - ホテルルーム予約で失敗して、エラーを返却して終了する
+//   - ディナー食材予約で失敗して、ホテルルームの補償アクションが3回失敗して、エラーを返して終了する
+//   - 駐車場予約で失敗して、ホテルルームとディナー食材の補償アクションが3回ずつ失敗して、エラーを返して終了する
+func TestHotelBookingSagaWorkflow_WithMissCompensation(t *testing.T) {
+	tests := map[string]struct {
+		request BookingRequest
+
+		mockHotelError       error
+		mockHotelErrorTimes  int
+		mockHotelResult      *activities.HotelBookingResult
+		mockHotelResultTimes int
+
+		mockDinnerError       error
+		mockDinnerErrorTimes  int
+		mockDinnerResult      *activities.DinnerBookingResult
+		mockDinnerResultTimes int
+
+		mockParkingError       error
+		mockParkingErrorTimes  int
+		mockParkingResult      *activities.ParkingBookingResult
+		mockParkingResultTimes int
+
+		mockHotelCompensationError       error
+		mockHotelCompensationErrorTimes  int
+		mockHotelCompensationResult      *activities.CompensationResult
+		mockHotelCompensationResultTimes int
+
+		mockDinnerCompensationError       error
+		mockDinnerCompensationErrorTimes  int
+		mockDinnerCompensationResult      *activities.CompensationResult
+		mockDinnerCompensationResultTimes int
+
+		expectedWorkflowSuccess bool
+		expectedHotelSuccess    bool
+		expectedDinnerSuccess   bool
+		expectedParkingSuccess  bool
 	}{
-		{
-			name: "全アクティビティ成功 - 完全なSaga成功",
-			given: struct {
-				request         BookingRequest
-				activityResults map[string]error
-			}{
-				request: BookingRequest{
-					BookingID: "booking-success-001",
-					UserID:    "user-001",
-					Hotel:     HotelRequest{HotelID: "hotel-001"},
-					Dinner:    DinnerRequest{MenuType: "standard"},
-					Parking:   ParkingRequest{SpaceType: "standard"},
-				},
-				activityResults: map[string]error{
-					"hotel_room":   nil,
-					"dinner_food":  nil,
-					"parking":      nil,
-				},
+		// 正常系: ホテルルーム、ディナー食材、駐車場の順に成功する、補償アクションは動かない
+		"正常系 - ホテルルーム、ディナー食材、駐車場の順に成功": {
+			request: BookingRequest{
+				BookingID: "booking-success-001",
+				UserID:    "user-001",
+				Hotel:     HotelRequest{HotelID: "hotel-001"},
+				Dinner:    DinnerRequest{MenuType: "standard"},
+				Parking:   ParkingRequest{SpaceType: "standard"},
 			},
-			when: "execute_workflow",
-			then: struct {
-				expectSuccess       bool
-				compensationCalls   []string
-				expectedResultError bool
-			}{
-				expectSuccess:       true,
-				compensationCalls:   []string{}, // 成功時は補償処理なし
-				expectedResultError: false,
+			mockHotelResult: &activities.HotelBookingResult{
+				Success:    true,
+				ResourceID: "room-001",
+				Message:    "ホテルルーム予約が完了しました",
 			},
+			mockHotelResultTimes: 1,
+			mockDinnerResult: &activities.DinnerBookingResult{
+				Success:    true,
+				ResourceID: "food-001",
+				Message:    "ディナー食材予約が完了しました",
+			},
+			mockDinnerResultTimes: 1,
+			mockParkingResult: &activities.ParkingBookingResult{
+				Success:    true,
+				ResourceID: "parking-001",
+				Message:    "駐車場予約が完了しました",
+			},
+			mockParkingResultTimes:  1,
+			expectedWorkflowSuccess: true,
+			expectedHotelSuccess:    true,
+			expectedDinnerSuccess:   true,
+			expectedParkingSuccess:  true,
 		},
-		{
-			name: "ホテルルーム予約失敗 - 補償処理なし",
-			given: struct {
-				request         BookingRequest
-				activityResults map[string]error
-			}{
-				request: BookingRequest{
-					BookingID: "booking-fail-hotel-001",
-					UserID:    "user-001",
-					Hotel:     HotelRequest{HotelID: "hotel-full"},
-					Dinner:    DinnerRequest{MenuType: "standard"},
-					Parking:   ParkingRequest{SpaceType: "standard"},
-				},
-				activityResults: map[string]error{
-					"hotel_room": &activities.BusinessError{Message: "指定されたホテルは満室です"},
-				},
+		// 準異常系: ディナー食材予約で失敗するが、ホテルルームの補償アクションが1回で成功
+		"準異常系 - ディナー食材予約失敗、ホテルルーム補償1回で成功": {
+			request: BookingRequest{
+				BookingID: "booking-dinner-fail-001",
+				UserID:    "user-001",
+				Hotel:     HotelRequest{HotelID: "hotel-001"},
+				Dinner:    DinnerRequest{MenuType: "out-of-stock"},
+				Parking:   ParkingRequest{SpaceType: "standard"},
 			},
-			when: "execute_workflow",
-			then: struct {
-				expectSuccess       bool
-				compensationCalls   []string
-				expectedResultError bool
-			}{
-				expectSuccess:       false,
-				compensationCalls:   []string{}, // 1番目の失敗時は補償なし
-				expectedResultError: true,
+			mockHotelResult: &activities.HotelBookingResult{
+				Success:    true,
+				ResourceID: "room-002",
+				Message:    "ホテルルーム予約が完了しました",
 			},
+			mockHotelResultTimes: 1,
+			mockDinnerError:      &activities.BusinessError{Message: "指定されたメニューの食材が在庫不足です"},
+			mockDinnerErrorTimes: 3,
+			mockHotelCompensationResult: &activities.CompensationResult{
+				Success: true,
+				Message: "ホテルルーム補償が完了しました",
+			},
+			mockHotelCompensationResultTimes: 1,
+			expectedWorkflowSuccess:          false,
+			expectedHotelSuccess:             true,
+			expectedDinnerSuccess:            false,
+			expectedParkingSuccess:           false,
 		},
-		{
-			name: "ディナー食材予約失敗 - ホテルルーム補償",
-			given: struct {
-				request         BookingRequest
-				activityResults map[string]error
-			}{
-				request: BookingRequest{
-					BookingID: "booking-fail-dinner-001",
-					UserID:    "user-001",
-					Hotel:     HotelRequest{HotelID: "hotel-001"},
-					Dinner:    DinnerRequest{MenuType: "out-of-stock"},
-					Parking:   ParkingRequest{SpaceType: "standard"},
-				},
-				activityResults: map[string]error{
-					"hotel_room":  nil,
-					"dinner_food": &activities.BusinessError{Message: "指定されたメニューの食材が在庫不足です"},
-				},
+		// 準異常系: ディナー食材予約で失敗するが、ホテルルームの補償アクションが2回失敗してから成功
+		"準異常系 - ディナー食材予約失敗、ホテルルーム補償2回失敗後成功": {
+			request: BookingRequest{
+				BookingID: "booking-dinner-fail-002",
+				UserID:    "user-001",
+				Hotel:     HotelRequest{HotelID: "hotel-001"},
+				Dinner:    DinnerRequest{MenuType: "out-of-stock"},
+				Parking:   ParkingRequest{SpaceType: "standard"},
 			},
-			when: "execute_workflow",
-			then: struct {
-				expectSuccess       bool
-				compensationCalls   []string
-				expectedResultError bool
-			}{
-				expectSuccess:       false,
-				compensationCalls:   []string{"CompensateHotelRoomActivity"},
-				expectedResultError: true,
+			mockHotelResult: &activities.HotelBookingResult{
+				Success:    true,
+				ResourceID: "room-003",
+				Message:    "ホテルルーム予約が完了しました",
 			},
+			mockHotelResultTimes:            1,
+			mockDinnerError:                 &activities.BusinessError{Message: "指定されたメニューの食材が在庫不足です"},
+			mockDinnerErrorTimes:            3,
+			mockHotelCompensationError:      &activities.TemporalError{Message: "補償処理で一時的エラーが発生しました"},
+			mockHotelCompensationErrorTimes: 2,
+			mockHotelCompensationResult: &activities.CompensationResult{
+				Success: true,
+				Message: "ホテルルーム補償が完了しました",
+			},
+			mockHotelCompensationResultTimes: 1,
+			expectedWorkflowSuccess:          false,
+			expectedHotelSuccess:             true,
+			expectedDinnerSuccess:            false,
+			expectedParkingSuccess:           false,
 		},
-		{
-			name: "駐車場予約失敗 - ホテルルーム・ディナー食材補償",
-			given: struct {
-				request         BookingRequest
-				activityResults map[string]error
-			}{
-				request: BookingRequest{
-					BookingID: "booking-fail-parking-001",
-					UserID:    "user-001",
-					Hotel:     HotelRequest{HotelID: "hotel-001"},
-					Dinner:    DinnerRequest{MenuType: "standard"},
-					Parking:   ParkingRequest{SpaceType: "full"},
-				},
-				activityResults: map[string]error{
-					"hotel_room":  nil,
-					"dinner_food": nil,
-					"parking":     &activities.BusinessError{Message: "指定された駐車場は満車です"},
-				},
+		// 準異常系: 駐車場予約で失敗するが、ホテルルーム・ディナー食材の補償アクションが成功
+		"準異常系 - 駐車場予約失敗、ホテルルーム・ディナー食材補償成功": {
+			request: BookingRequest{
+				BookingID: "booking-parking-fail-001",
+				UserID:    "user-001",
+				Hotel:     HotelRequest{HotelID: "hotel-001"},
+				Dinner:    DinnerRequest{MenuType: "standard"},
+				Parking:   ParkingRequest{SpaceType: "full"},
 			},
-			when: "execute_workflow",
-			then: struct {
-				expectSuccess       bool
-				compensationCalls   []string
-				expectedResultError bool
-			}{
-				expectSuccess:     false,
-				compensationCalls: []string{"CompensateDinnerFoodActivity", "CompensateHotelRoomActivity"}, // 逆順での補償
-				expectedResultError: true,
+			mockHotelResult: &activities.HotelBookingResult{
+				Success:    true,
+				ResourceID: "room-004",
+				Message:    "ホテルルーム予約が完了しました",
 			},
+			mockHotelResultTimes: 1,
+			mockDinnerResult: &activities.DinnerBookingResult{
+				Success:    true,
+				ResourceID: "food-004",
+				Message:    "ディナー食材予約が完了しました",
+			},
+			mockDinnerResultTimes: 1,
+			mockParkingError:      &activities.BusinessError{Message: "指定された駐車場は満車です"},
+			mockParkingErrorTimes: 3,
+			mockHotelCompensationResult: &activities.CompensationResult{
+				Success: true,
+				Message: "ホテルルーム補償が完了しました",
+			},
+			mockHotelCompensationResultTimes: 1,
+			mockDinnerCompensationResult: &activities.CompensationResult{
+				Success: true,
+				Message: "ディナー食材補償が完了しました",
+			},
+			mockDinnerCompensationResultTimes: 1,
+			expectedWorkflowSuccess:           false,
+			expectedHotelSuccess:              true,
+			expectedDinnerSuccess:             true,
+			expectedParkingSuccess:            false,
 		},
-		{
-			name: "一時的エラーでのリトライ成功",
-			given: struct {
-				request         BookingRequest
-				activityResults map[string]error
-			}{
-				request: BookingRequest{
-					BookingID: "booking-retry-001",
-					UserID:    "user-001",
-					Hotel:     HotelRequest{HotelID: "hotel-001"},
-					Dinner:    DinnerRequest{MenuType: "standard"},
-					Parking:   ParkingRequest{SpaceType: "standard"},
-				},
-				activityResults: map[string]error{
-					"hotel_room":   nil,
-					"dinner_food":  &activities.TemporalError{Message: "外部システムで障害が発生しました"}, // リトライで成功させる想定
-					"parking":      nil,
-				},
+		// 準異常系: 駐車場予約で失敗、ホテルルーム・ディナー食材の補償アクションが2回ずつ失敗してから成功
+		"準異常系 - 駐車場予約失敗、ホテルルーム・ディナー食材補償2回失敗後成功": {
+			request: BookingRequest{
+				BookingID: "booking-parking-fail-002",
+				UserID:    "user-001",
+				Hotel:     HotelRequest{HotelID: "hotel-001"},
+				Dinner:    DinnerRequest{MenuType: "standard"},
+				Parking:   ParkingRequest{SpaceType: "full"},
 			},
-			when: "execute_workflow",
-			then: struct {
-				expectSuccess       bool
-				compensationCalls   []string
-				expectedResultError bool
-			}{
-				expectSuccess:       true,  // リトライ後成功
-				compensationCalls:   []string{},
-				expectedResultError: false,
+			mockHotelResult: &activities.HotelBookingResult{
+				Success:    true,
+				ResourceID: "room-005",
+				Message:    "ホテルルーム予約が完了しました",
 			},
+			mockHotelResultTimes: 1,
+			mockDinnerResult: &activities.DinnerBookingResult{
+				Success:    true,
+				ResourceID: "food-005",
+				Message:    "ディナー食材予約が完了しました",
+			},
+			mockDinnerResultTimes:           1,
+			mockParkingError:                &activities.BusinessError{Message: "指定された駐車場は満車です"},
+			mockParkingErrorTimes:           3,
+			mockHotelCompensationError:      &activities.TemporalError{Message: "ホテル補償処理で一時的エラーが発生しました"},
+			mockHotelCompensationErrorTimes: 2,
+			mockHotelCompensationResult: &activities.CompensationResult{
+				Success: true,
+				Message: "ホテルルーム補償が完了しました",
+			},
+			mockHotelCompensationResultTimes: 1,
+			mockDinnerCompensationError:      &activities.TemporalError{Message: "ディナー補償処理で一時的エラーが発生しました"},
+			mockDinnerCompensationErrorTimes: 2,
+			mockDinnerCompensationResult: &activities.CompensationResult{
+				Success: true,
+				Message: "ディナー食材補償が完了しました",
+			},
+			mockDinnerCompensationResultTimes: 1,
+			expectedWorkflowSuccess:           false,
+			expectedHotelSuccess:              true,
+			expectedDinnerSuccess:             true,
+			expectedParkingSuccess:            false,
 		},
-		{
-			name: "不正なリクエスト - バリデーションエラー",
-			given: struct {
-				request         BookingRequest
-				activityResults map[string]error
-			}{
-				request: BookingRequest{
-					BookingID: "", // 空のBookingID
-					UserID:    "user-001",
-					Hotel:     HotelRequest{HotelID: "hotel-001"},
-					Dinner:    DinnerRequest{MenuType: "standard"},
-					Parking:   ParkingRequest{SpaceType: "standard"},
-				},
-				activityResults: map[string]error{},
+		// 異常系: ホテルルーム予約で失敗して、エラーを返却して終了
+		"異常系 - ホテルルーム予約失敗、エラー返却終了": {
+			request: BookingRequest{
+				BookingID: "booking-hotel-fail-001",
+				UserID:    "user-001",
+				Hotel:     HotelRequest{HotelID: "hotel-full"},
+				Dinner:    DinnerRequest{MenuType: "standard"},
+				Parking:   ParkingRequest{SpaceType: "standard"},
 			},
-			when: "execute_workflow",
-			then: struct {
-				expectSuccess       bool
-				compensationCalls   []string
-				expectedResultError bool
-			}{
-				expectSuccess:       false,
-				compensationCalls:   []string{},
-				expectedResultError: true,
+			mockHotelError:          &activities.BusinessError{Message: "指定されたホテルは満室です"},
+			mockHotelErrorTimes:     3,
+			expectedWorkflowSuccess: false,
+			expectedHotelSuccess:    false,
+			expectedDinnerSuccess:   false,
+			expectedParkingSuccess:  false,
+		},
+		// 異常系: ディナー食材予約で失敗、ホテルルームの補償アクションが3回失敗してエラー終了
+		"異常系 - ディナー食材予約失敗、ホテルルーム補償3回失敗": {
+			request: BookingRequest{
+				BookingID: "booking-dinner-fail-comp-fail-001",
+				UserID:    "user-001",
+				Hotel:     HotelRequest{HotelID: "hotel-001"},
+				Dinner:    DinnerRequest{MenuType: "out-of-stock"},
+				Parking:   ParkingRequest{SpaceType: "standard"},
 			},
+			mockHotelResult: &activities.HotelBookingResult{
+				Success:    true,
+				ResourceID: "room-006",
+				Message:    "ホテルルーム予約が完了しました",
+			},
+			mockHotelResultTimes:            1,
+			mockDinnerError:                 &activities.BusinessError{Message: "指定されたメニューの食材が在庫不足です"},
+			mockDinnerErrorTimes:            3,
+			mockHotelCompensationError:      &activities.TemporalError{Message: "補償処理システムがダウンしています"},
+			mockHotelCompensationErrorTimes: 3, // リトライ回数上限
+			expectedWorkflowSuccess:         false,
+			expectedHotelSuccess:            true,
+			expectedDinnerSuccess:           false,
+			expectedParkingSuccess:          false,
+		},
+		// 異常系: 駐車場予約で失敗、ホテルルーム・ディナー食材の補償アクションが3回ずつ失敗してエラー終了
+		"異常系 - 駐車場予約失敗、ホテルルーム・ディナー食材補償3回失敗": {
+			request: BookingRequest{
+				BookingID: "booking-parking-fail-comp-fail-001",
+				UserID:    "user-001",
+				Hotel:     HotelRequest{HotelID: "hotel-001"},
+				Dinner:    DinnerRequest{MenuType: "standard"},
+				Parking:   ParkingRequest{SpaceType: "full"},
+			},
+			mockHotelResult: &activities.HotelBookingResult{
+				Success:    true,
+				ResourceID: "room-007",
+				Message:    "ホテルルーム予約が完了しました",
+			},
+			mockHotelResultTimes: 1,
+			mockDinnerResult: &activities.DinnerBookingResult{
+				Success:    true,
+				ResourceID: "food-007",
+				Message:    "ディナー食材予約が完了しました",
+			},
+			mockDinnerResultTimes:            1,
+			mockParkingError:                 &activities.BusinessError{Message: "指定された駐車場は満車です"},
+			mockParkingErrorTimes:            3,
+			mockHotelCompensationError:       &activities.TemporalError{Message: "ホテル補償処理システムがダウンしています"},
+			mockHotelCompensationErrorTimes:  3, // リトライ回数上限
+			mockDinnerCompensationError:      &activities.TemporalError{Message: "ディナー補償処理システムがダウンしています"},
+			mockDinnerCompensationErrorTimes: 3, // リトライ回数上限
+			expectedWorkflowSuccess:          false,
+			expectedHotelSuccess:             true,
+			expectedDinnerSuccess:            true,
+			expectedParkingSuccess:           false,
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// 各テストで新しい環境を作成
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			// when - ワークフローを実行
 			testSuite := &testsuite.WorkflowTestSuite{}
 			testEnv := testSuite.NewTestWorkflowEnvironment()
-			
+
 			// アクティビティの登録
 			testEnv.RegisterActivity(activities.HotelRoomBookingActivity)
 			testEnv.RegisterActivity(activities.DinnerFoodBookingActivity)
@@ -211,134 +317,122 @@ func TestHotelBookingSagaWorkflow(t *testing.T) {
 			testEnv.RegisterActivity(activities.CompensateDinnerFoodActivity)
 			testEnv.RegisterActivity(activities.CompensateParkingActivity)
 
-			// Given - モックアクティビティ結果の設定
-			setupMockActivities(testEnv, tt.given.activityResults, tt.given.request)
+			// モックの設定
+			// ホテルルーム予約
+			if tt.mockHotelErrorTimes > 0 {
+				testEnv.OnActivity(activities.HotelRoomBookingActivity, mock.Anything, mock.Anything).Return(
+					nil, tt.mockHotelError).Times(tt.mockHotelErrorTimes)
+			}
+			if tt.mockHotelResultTimes > 0 {
+				testEnv.OnActivity(activities.HotelRoomBookingActivity, mock.Anything, mock.Anything).Return(
+					tt.mockHotelResult, nil).Times(tt.mockHotelResultTimes)
+			}
 
-			// When - ワークフロー実行
-			testEnv.ExecuteWorkflow(HotelBookingSaga, tt.given.request)
+			// ディナー食材予約
+			if tt.mockDinnerErrorTimes > 0 {
+				testEnv.OnActivity(activities.DinnerFoodBookingActivity, mock.Anything, mock.Anything).Return(
+					nil, tt.mockDinnerError).Times(tt.mockDinnerErrorTimes)
+			}
+			if tt.mockDinnerResultTimes > 0 {
+				testEnv.OnActivity(activities.DinnerFoodBookingActivity, mock.Anything, mock.Anything).Return(
+					tt.mockDinnerResult, nil).Times(tt.mockDinnerResultTimes)
+			}
 
-			// Then - 結果の検証
-			if tt.then.expectSuccess {
-				if testEnv.IsWorkflowCompleted() {
-					err := testEnv.GetWorkflowError()
-					if err != nil {
-						t.Errorf("ワークフローが成功すべきでしたが、エラーが発生しました: %v", err)
-						return
-					}
+			// 駐車場予約
+			if tt.mockParkingErrorTimes > 0 {
+				testEnv.OnActivity(activities.ParkingBookingActivity, mock.Anything, mock.Anything).Return(
+					nil, tt.mockParkingError).Times(tt.mockParkingErrorTimes)
+			}
+			if tt.mockParkingResultTimes > 0 {
+				testEnv.OnActivity(activities.ParkingBookingActivity, mock.Anything, mock.Anything).Return(
+					tt.mockParkingResult, nil).Times(tt.mockParkingResultTimes)
+			}
 
-					var result BookingResult
-					if err := testEnv.GetWorkflowResult(&result); err != nil {
-						t.Errorf("結果の取得に失敗しました: %v", err)
-						return
-					}
+			// ホテルルーム補償処理
+			if tt.mockHotelCompensationErrorTimes > 0 {
+				testEnv.OnActivity(activities.CompensateHotelRoomActivity, mock.Anything, mock.Anything, mock.Anything).Return(
+					nil, tt.mockHotelCompensationError).Times(tt.mockHotelCompensationErrorTimes)
+			}
+			if tt.mockHotelCompensationResultTimes > 0 {
+				testEnv.OnActivity(activities.CompensateHotelRoomActivity, mock.Anything, mock.Anything, mock.Anything).Return(
+					tt.mockHotelCompensationResult, nil).Times(tt.mockHotelCompensationResultTimes)
+			}
 
-					if !result.Success {
-						t.Errorf("期待されたSuccessフラグ = true, 実際 = %v", result.Success)
-					}
-				} else {
-					t.Errorf("ワークフローが完了していません")
+			// ディナー食材補償処理
+			if tt.mockDinnerCompensationErrorTimes > 0 {
+				testEnv.OnActivity(activities.CompensateDinnerFoodActivity, mock.Anything, mock.Anything, mock.Anything).Return(
+					nil, tt.mockDinnerCompensationError).Times(tt.mockDinnerCompensationErrorTimes)
+			}
+			if tt.mockDinnerCompensationResultTimes > 0 {
+				testEnv.OnActivity(activities.CompensateDinnerFoodActivity, mock.Anything, mock.Anything, mock.Anything).Return(
+					tt.mockDinnerCompensationResult, nil).Times(tt.mockDinnerCompensationResultTimes)
+			}
+
+			testEnv.ExecuteWorkflow(HotelBookingSaga, tt.request)
+
+			// then - 結果の検証
+			if !testEnv.IsWorkflowCompleted() {
+				t.Errorf("ワークフローが完了していません")
+				return
+			}
+
+			// ワークフローはエラーなく完了するが、結果はSuccessがfalse
+			err := testEnv.GetWorkflowError()
+			if err != nil {
+				t.Errorf("ワークフローがエラーで終了しました: %v", err)
+				return
+			}
+
+			// 結果の取得と検証
+			var result BookingResult
+			if err := testEnv.GetWorkflowResult(&result); err != nil {
+				t.Errorf("結果の取得に失敗しました: %v", err)
+				return
+			}
+
+			// アサーション - 期待値との比較
+			if result.Success != tt.expectedWorkflowSuccess {
+				t.Errorf("ワークフロー成功フラグ: expected=%v, actual=%v", tt.expectedWorkflowSuccess, result.Success)
+			}
+
+			// ホテルルーム予約結果のアサーション
+			if tt.expectedHotelSuccess {
+				if result.HotelResult == nil || !result.HotelResult.Success {
+					t.Errorf("ホテルルーム予約成功フラグ: expected=%v, actual=%v", tt.expectedHotelSuccess,
+						result.HotelResult != nil && result.HotelResult.Success)
 				}
 			} else {
-				if tt.then.expectedResultError {
-					if testEnv.IsWorkflowCompleted() {
-						err := testEnv.GetWorkflowError()
-						if err == nil {
-							// エラーがない場合、結果を確認
-							var result BookingResult
-							if testEnv.GetWorkflowResult(&result) == nil && result.Success {
-								t.Errorf("ワークフローが失敗すべきでしたが、成功しました")
-								return
-							}
-						}
-					}
+				if result.HotelResult != nil && result.HotelResult.Success {
+					t.Errorf("ホテルルーム予約成功フラグ: expected=%v, actual=%v", tt.expectedHotelSuccess, result.HotelResult.Success)
 				}
 			}
 
-			// 補償処理の呼び出し確認
-			verifyCompensationCalls(t, testEnv, tt.then.compensationCalls)
+			// ディナー食材予約結果のアサーション
+			if tt.expectedDinnerSuccess {
+				if result.DinnerResult == nil || !result.DinnerResult.Success {
+					t.Errorf("ディナー食材予約成功フラグ: expected=%v, actual=%v", tt.expectedDinnerSuccess,
+						result.DinnerResult != nil && result.DinnerResult.Success)
+				}
+			} else {
+				if result.DinnerResult != nil && result.DinnerResult.Success {
+					t.Errorf("ディナー食材予約成功フラグ: expected=%v, actual=%v", tt.expectedDinnerSuccess, result.DinnerResult.Success)
+				}
+			}
+
+			// 駐車場予約結果のアサーション
+			if tt.expectedParkingSuccess {
+				if result.ParkingResult == nil || !result.ParkingResult.Success {
+					t.Errorf("駐車場予約成功フラグ: expected=%v, actual=%v", tt.expectedParkingSuccess,
+						result.ParkingResult != nil && result.ParkingResult.Success)
+				}
+			} else {
+				if result.ParkingResult != nil && result.ParkingResult.Success {
+					t.Errorf("駐車場予約成功フラグ: expected=%v, actual=%v", tt.expectedParkingSuccess, result.ParkingResult.Success)
+				}
+			}
+
+			// 補償処理の呼び出し確認（リトライを含む）
+			testEnv.AssertExpectations(t)
 		})
-	}
-}
-
-// setupMockActivities モックアクティビティの結果を設定
-func setupMockActivities(env *testsuite.TestWorkflowEnvironment, results map[string]error, request BookingRequest) {
-	// ホテルルーム予約アクティビティのモック
-	if err, exists := results["hotel_room"]; exists {
-		if err != nil {
-			// エラーの場合、リトライを考慮して複数回設定
-			env.OnActivity(activities.HotelRoomBookingActivity, mock.Anything, mock.Anything).Return(nil, err).Times(3)
-		} else {
-			env.OnActivity(activities.HotelRoomBookingActivity, mock.Anything, mock.Anything).Return(
-				&activities.HotelBookingResult{
-					Success:    true,
-					ResourceID: "room-123",
-					Message:    "ホテルルーム予約が完了しました",
-				}, nil).Once()
-		}
-	}
-
-	// ディナー食材予約アクティビティのモック
-	if err, exists := results["dinner_food"]; exists {
-		if err != nil {
-			// 一時的エラーの場合、最初は失敗、2回目は成功するように設定
-			if _, isTemp := err.(*activities.TemporalError); isTemp {
-				env.OnActivity(activities.DinnerFoodBookingActivity, mock.Anything, mock.Anything).Return(nil, err).Once()
-				env.OnActivity(activities.DinnerFoodBookingActivity, mock.Anything, mock.Anything).Return(
-					&activities.DinnerBookingResult{
-						Success:    true,
-						ResourceID: "food-123",
-						Message:    "ディナー食材予約が完了しました",
-					}, nil).Maybe() // リトライで成功
-			} else {
-				// ビジネスエラーの場合、リトライを考慮して複数回設定
-				env.OnActivity(activities.DinnerFoodBookingActivity, mock.Anything, mock.Anything).Return(nil, err).Times(3)
-			}
-		} else {
-			env.OnActivity(activities.DinnerFoodBookingActivity, mock.Anything, mock.Anything).Return(
-				&activities.DinnerBookingResult{
-					Success:    true,
-					ResourceID: "food-123",
-					Message:    "ディナー食材予約が完了しました",
-				}, nil).Once()
-		}
-	}
-
-	// 駐車場予約アクティビティのモック
-	if err, exists := results["parking"]; exists {
-		if err != nil {
-			// エラーの場合、リトライを考慮して複数回設定
-			env.OnActivity(activities.ParkingBookingActivity, mock.Anything, mock.Anything).Return(nil, err).Times(3)
-		} else {
-			env.OnActivity(activities.ParkingBookingActivity, mock.Anything, mock.Anything).Return(
-				&activities.ParkingBookingResult{
-					Success:    true,
-					ResourceID: "parking-123",
-					Message:    "駐車場予約が完了しました",
-				}, nil).Once()
-		}
-	}
-
-	// 補償アクティビティのモック（常に成功）
-	env.OnActivity(activities.CompensateHotelRoomActivity, mock.Anything, mock.Anything, mock.Anything).Return(
-		&activities.CompensationResult{Success: true, Message: "ホテルルーム補償が完了しました"}, nil).Maybe()
-	env.OnActivity(activities.CompensateDinnerFoodActivity, mock.Anything, mock.Anything, mock.Anything).Return(
-		&activities.CompensationResult{Success: true, Message: "ディナー食材補償が完了しました"}, nil).Maybe()
-	env.OnActivity(activities.CompensateParkingActivity, mock.Anything, mock.Anything, mock.Anything).Return(
-		&activities.CompensationResult{Success: true, Message: "駐車場補償が完了しました"}, nil).Maybe()
-}
-
-// verifyCompensationCalls 補償処理の呼び出しを検証
-func verifyCompensationCalls(t *testing.T, env *testsuite.TestWorkflowEnvironment, expectedCalls []string) {
-	// この実装では、実際の補償処理の呼び出し順序を確認する
-	// Temporalテストフレームワークの制限上、詳細な呼び出し順序の検証は簡略化
-	for _, expectedCall := range expectedCalls {
-		switch expectedCall {
-		case "CompensateHotelRoomActivity":
-			env.AssertExpectations(t)
-		case "CompensateDinnerFoodActivity":
-			env.AssertExpectations(t)
-		case "CompensateParkingActivity":
-			env.AssertExpectations(t)
-		}
 	}
 }
