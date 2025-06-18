@@ -19,10 +19,10 @@ func (a *ParkingActivity) CompensateParking(ctx context.Context, bookingID strin
 	// 1. 駐車場管理システムAPIを呼び出して予約をキャンセル
 	// 2. 駐車料金の返金処理
 	// 3. 駐車スペースの開放処理
-	
+
 	// シミュレーション: ログ出力のみ
 	a.logger.Info("駐車場予約をキャンセルしました", "BookingID", bookingID, "ResourceID", resourceID)
-	
+
 	result := &CompensationResult{
 		Success: true,
 		Message: "駐車場予約の補償処理が完了しました",

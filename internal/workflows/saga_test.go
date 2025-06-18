@@ -13,8 +13,8 @@ type TestActivity func() error
 
 func TestCompensations_AddCompensation(t *testing.T) {
 	tests := []struct {
-		name     string
-		given    struct {
+		name  string
+		given struct {
 			activities []TestActivity
 		}
 		when string

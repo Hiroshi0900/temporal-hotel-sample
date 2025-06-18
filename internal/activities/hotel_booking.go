@@ -96,10 +96,10 @@ func (a *HotelActivity) BookHotel(ctx context.Context, req HotelBookingRequest) 
 			ResourceID: "room-123", // 実際のシステムでは動的に生成
 			Message:    "ホテルルーム予約が完了しました",
 		}
-		
+
 		// キャッシュに保存（冪等性保証）
 		bookingCache[req.BookingID] = result
-		
+
 		a.logger.Info("ホテルルーム予約が完了", "BookingID", req.BookingID, "ResourceID", result.ResourceID)
 		return result, nil
 	}

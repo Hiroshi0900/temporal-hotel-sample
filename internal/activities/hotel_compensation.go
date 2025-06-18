@@ -19,10 +19,10 @@ func (a *HotelActivity) CompensateHotel(ctx context.Context, bookingID string, r
 	// 1. ホテル予約システムAPIを呼び出して予約をキャンセル
 	// 2. 料金の返金処理
 	// 3. 在庫の復旧処理
-	
+
 	// シミュレーション: ログ出力のみ
 	a.logger.Info("ホテルルーム予約をキャンセルしました", "BookingID", bookingID, "ResourceID", resourceID)
-	
+
 	result := &CompensationResult{
 		Success: true,
 		Message: "ホテルルーム予約の補償処理が完了しました",

@@ -1,244 +1,191 @@
 package activities
 
 import (
-	"strings"
+	"context"
 	"testing"
 
-	"go.temporal.io/sdk/testsuite"
+	"github.com/stretchr/testify/assert"
 )
 
-func TestHotelRoomBookingActivity(t *testing.T) {
-	//TODO: テスト構造体は見直す。whenの意味がなくなってる
-	tests := []struct {
-		name  string
-		given HotelBookingRequest
-		when  string
-		then  struct {
-			expectError bool
-			errorType   string
-			result      *HotelBookingResult
-		}
+// テストケースについて
+// 正常系:
+//   - 正常なリクエストがされた場合、ホテル予約処理が完了する
+//   - booking-duplicateの時、冪等性が保証される
+//
+// 異常系:
+//   - BookingIDが空の時、Businessエラーが返却される
+//   - UserIDが空の時、Businessエラーが返却される
+//   - HotelIDが空の時、Businessエラーが返却される
+//   - booking-network-errorの時、Serverエラーが返却される
+//   - booking-fullの時、Businessエラーが返却される
+func Test_HotelRoomBookingActivity(t *testing.T) {
+	testcases := map[string]struct {
+		request        HotelBookingRequest
+		expectedResult *HotelBookingResult
+		expectedErr    error
 	}{
-		{
-			name: "正常なホテルルーム予約",
-			given: HotelBookingRequest{
+		"正常系: 想定通りのリクエストが来た時、ホテル予約が成功する": {
+			request: HotelBookingRequest{
 				BookingID: "booking-123",
 				UserID:    "user-456",
 				HotelID:   "hotel-789",
 			},
-			when: "execute_activity",
-			then: struct {
-				expectError bool
-				errorType   string
-				result      *HotelBookingResult
-			}{
-				expectError: false,
-				errorType:   "",
-				result: &HotelBookingResult{
-					Success:    true,
-					ResourceID: "room-123",
-					Message:    "ホテルルーム予約が完了しました",
-				},
+			expectedResult: &HotelBookingResult{
+				Success:    true,
+				ResourceID: "room-123",
+				Message:    "ホテルルーム予約が完了しました",
 			},
+			expectedErr: nil,
 		},
-		{
-			name: "BookingIDが空",
-			given: HotelBookingRequest{
-				BookingID: "",
-				UserID:    "user-456",
-				HotelID:   "hotel-789",
-			},
-			when: "execute_activity",
-			then: struct {
-				expectError bool
-				errorType   string
-				result      *HotelBookingResult
-			}{
-				expectError: true,
-				errorType:   "BusinessError",
-				result:      nil,
-			},
-		},
-		{
-			name: "サーバーエラー（ネットワークエラー）",
-			given: HotelBookingRequest{
-				BookingID: "booking-network-error",
-				UserID:    "user-456",
-				HotelID:   "hotel-789",
-			},
-			when: "execute_activity",
-			then: struct {
-				expectError bool
-				errorType   string
-				result      *HotelBookingResult
-			}{
-				expectError: true,
-				errorType:   "ServerError",
-				result:      nil,
-			},
-		},
-		{
-			name: "ビジネスエラー（満室）",
-			given: HotelBookingRequest{
-				BookingID: "booking-full",
-				UserID:    "user-456",
-				HotelID:   "hotel-789",
-			},
-			when: "execute_activity",
-			then: struct {
-				expectError bool
-				errorType   string
-				result      *HotelBookingResult
-			}{
-				expectError: true,
-				errorType:   "BusinessError",
-				result:      nil,
-			},
-		},
-		{
-			name: "冪等性テスト（重複リクエスト）",
-			given: HotelBookingRequest{
+		"正常系: booking-duplicateの時、冪等性が保証される": {
+			request: HotelBookingRequest{
 				BookingID: "booking-duplicate",
 				UserID:    "user-456",
 				HotelID:   "hotel-789",
 			},
-			when: "execute_activity",
-			then: struct {
-				expectError bool
-				errorType   string
-				result      *HotelBookingResult
-			}{
-				expectError: false,
-				errorType:   "",
-				result: &HotelBookingResult{
-					Success:    true,
-					ResourceID: "room-duplicate",
-					Message:    "既に予約済みです",
-				},
+			expectedResult: &HotelBookingResult{
+				Success:    true,
+				ResourceID: "room-duplicate",
+				Message:    "既に予約済みです",
+			},
+			expectedErr: nil,
+		},
+		"異常系: BookingIDが空の時、Businessエラーが返却される": {
+			request: HotelBookingRequest{
+				BookingID: "",
+				UserID:    "user-456",
+				HotelID:   "hotel-789",
+			},
+			expectedResult: nil,
+			expectedErr: &BusinessError{
+				Message: "BookingID is required",
+				Code:    "INVALID_BOOKING_ID",
+			},
+		},
+		"異常系: UserIDが空の時、Businessエラーが返却される": {
+			request: HotelBookingRequest{
+				BookingID: "booking-123",
+				UserID:    "",
+				HotelID:   "hotel-789",
+			},
+			expectedResult: nil,
+			expectedErr: &BusinessError{
+				Message: "UserID is required",
+				Code:    "INVALID_USER_ID",
+			},
+		},
+		"異常系: HotelIDが空の時、Businessエラーが返却される": {
+			request: HotelBookingRequest{
+				BookingID: "booking-123",
+				UserID:    "user-456",
+				HotelID:   "",
+			},
+			expectedResult: nil,
+			expectedErr: &BusinessError{
+				Message: "HotelID is required",
+				Code:    "INVALID_HOTEL_ID",
+			},
+		},
+		"異常系: booking-network-errorの時、Serverエラーが返却される": {
+			request: HotelBookingRequest{
+				BookingID: "booking-network-error",
+				UserID:    "user-456",
+				HotelID:   "hotel-789",
+			},
+			expectedResult: nil,
+			expectedErr: &ServerError{
+				Message: "ネットワークエラーが発生しました",
+				Code:    "NETWORK_ERROR",
+			},
+		},
+		"異常系: booking-fullの時、Businessエラーが返却される": {
+			request: HotelBookingRequest{
+				BookingID: "booking-full",
+				UserID:    "user-456",
+				HotelID:   "hotel-789",
+			},
+			expectedResult: nil,
+			expectedErr: &BusinessError{
+				Message: "指定されたホテルは満室です",
+				Code:    "HOTEL_FULL",
 			},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			testSuite := &testsuite.WorkflowTestSuite{}
-			env := testSuite.NewTestActivityEnvironment()
+	for name, tc := range testcases {
+		t.Run(name, func(t *testing.T) {
+			// given
+			ctx := context.Background()
+			mockLogger := &MockLogger{}
+			sut := NewHotelActivity(mockLogger)
 
-			// アクティビティを登録
-			env.RegisterActivity(HotelRoomBookingActivity)
+			// when
+			actualResult, actualErr := sut.BookHotel(ctx, tc.request)
 
-			// When
-			result, err := env.ExecuteActivity(HotelRoomBookingActivity, tt.given)
-
-			// Then
-			if tt.then.expectError {
-				if err == nil {
-					t.Errorf("期待されたエラーが発生しませんでした")
-					return
-				}
-
-				// Temporalのテスト環境では、エラーはActivityErrorにラップされるため、
-				// エラーメッセージをチェックする
-				errorMsg := err.Error()
-				switch tt.then.errorType {
-				case "BusinessError":
-					if !strings.Contains(errorMsg, "BookingID is required") &&
-						!strings.Contains(errorMsg, "UserID is required") &&
-						!strings.Contains(errorMsg, "HotelID is required") &&
-						!strings.Contains(errorMsg, "指定されたホテルは満室です") {
-						t.Errorf("期待されたBusinessErrorではありません: %s", errorMsg)
-					}
-				case "ServerError":
-					if !strings.Contains(errorMsg, "ネットワークエラーが発生しました") {
-						t.Errorf("期待されたServerErrorではありません: %s", errorMsg)
-					}
-				}
-			} else {
-				if err != nil {
-					t.Errorf("予期しないエラーが発生しました: %v", err)
-					return
-				}
-
-				var actualResult HotelBookingResult
-				if result != nil {
-					err = result.Get(&actualResult)
-					if err != nil {
-						t.Errorf("結果の取得に失敗しました: %v", err)
-						return
-					}
-
-					if actualResult.Success != tt.then.result.Success {
-						t.Errorf("期待されたSuccess値と異なります。expected: %t, actual: %t", tt.then.result.Success, actualResult.Success)
-					}
-
-					if actualResult.ResourceID != tt.then.result.ResourceID {
-						t.Errorf("期待されたResourceIDと異なります。expected: %s, actual: %s", tt.then.result.ResourceID, actualResult.ResourceID)
-					}
-				}
-			}
+			// then
+			assert.Equal(t, tc.expectedResult, actualResult)
+			assert.Equal(t, tc.expectedErr, actualErr)
 		})
 	}
 }
 
 func TestHotelBookingRequest_Validate(t *testing.T) {
-	tests := []struct {
-		name  string
-		given HotelBookingRequest
-		when  string
-		then  bool
+	testcases := map[string]struct {
+		request     HotelBookingRequest
+		expectedErr error
 	}{
-		{
-			name: "正常なリクエスト",
-			given: HotelBookingRequest{
+		"正常系: 正常なリクエスト": {
+			request: HotelBookingRequest{
 				BookingID: "booking-123",
 				UserID:    "user-456",
 				HotelID:   "hotel-789",
 			},
-			when: "validate",
-			then: false, // エラーなし
+			expectedErr: nil,
 		},
-		{
-			name: "BookingIDが空",
-			given: HotelBookingRequest{
+		"異常系: BookingIDが空": {
+			request: HotelBookingRequest{
 				BookingID: "",
 				UserID:    "user-456",
 				HotelID:   "hotel-789",
 			},
-			when: "validate",
-			then: true, // エラーあり
+			expectedErr: &BusinessError{
+				Message: "BookingID is required",
+				Code:    "INVALID_BOOKING_ID",
+			},
 		},
-		{
-			name: "UserIDが空",
-			given: HotelBookingRequest{
+		"異常系: UserIDが空": {
+			request: HotelBookingRequest{
 				BookingID: "booking-123",
 				UserID:    "",
 				HotelID:   "hotel-789",
 			},
-			when: "validate",
-			then: true, // エラーあり
+			expectedErr: &BusinessError{
+				Message: "UserID is required",
+				Code:    "INVALID_USER_ID",
+			},
 		},
-		{
-			name: "HotelIDが空",
-			given: HotelBookingRequest{
+		"異常系: HotelIDが空": {
+			request: HotelBookingRequest{
 				BookingID: "booking-123",
 				UserID:    "user-456",
 				HotelID:   "",
 			},
-			when: "validate",
-			then: true, // エラーあり
+			expectedErr: &BusinessError{
+				Message: "HotelID is required",
+				Code:    "INVALID_HOTEL_ID",
+			},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// When
-			err := tt.given.Validate()
+	for name, tc := range testcases {
+		t.Run(name, func(t *testing.T) {
+			// given - テストケースで設定済み
 
-			// Then
-			hasError := err != nil
-			if hasError != tt.then {
-				t.Errorf("期待されたバリデーション結果と異なります。expected error: %t, actual error: %t", tt.then, hasError)
-			}
+			// when
+			actualErr := tc.request.Validate()
+
+			// then
+			assert.Equal(t, tc.expectedErr, actualErr)
 		})
 	}
 }

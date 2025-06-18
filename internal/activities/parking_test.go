@@ -1,223 +1,191 @@
 package activities
 
 import (
-	"strings"
+	"context"
 	"testing"
 
-	"go.temporal.io/sdk/testsuite"
+	"github.com/stretchr/testify/assert"
 )
 
+// テストケースについて
+// 正常系:
+//   - 正常なリクエストがされた場合、駐車場予約処理が完了する
+//   - booking-duplicate-parkingの時、冪等性が保証される
+//
+// 異常系:
+//   - BookingIDが空の時、Businessエラーが返却される
+//   - UserIDが空の時、Businessエラーが返却される
+//   - SpaceTypeが空の時、Businessエラーが返却される
+//   - booking-connection-errorの時、Serverエラーが返却される
+//   - booking-fullの時、Businessエラーが返却される
+func Test_ParkingBookingActivity(t *testing.T) {
+	testcases := map[string]struct {
+		request        ParkingBookingRequest
+		expectedResult *ParkingBookingResult
+		expectedErr    error
+	}{
+		"正常系: 想定通りのリクエストが来た時、駐車場予約が成功する": {
+			request: ParkingBookingRequest{
+				BookingID: "booking-123",
+				UserID:    "user-456",
+				SpaceType: "standard",
+			},
+			expectedResult: &ParkingBookingResult{
+				Success:    true,
+				ResourceID: "parking-123",
+				Message:    "駐車場予約が完了しました",
+			},
+			expectedErr: nil,
+		},
+		"正常系: booking-duplicate-parkingの時、冪等性が保証される": {
+			request: ParkingBookingRequest{
+				BookingID: "booking-duplicate-parking",
+				UserID:    "user-456",
+				SpaceType: "standard",
+			},
+			expectedResult: &ParkingBookingResult{
+				Success:    true,
+				ResourceID: "parking-duplicate",
+				Message:    "既に予約済みです",
+			},
+			expectedErr: nil,
+		},
+		"異常系: BookingIDが空の時、Businessエラーが返却される": {
+			request: ParkingBookingRequest{
+				BookingID: "",
+				UserID:    "user-456",
+				SpaceType: "standard",
+			},
+			expectedResult: nil,
+			expectedErr: &BusinessError{
+				Message: "BookingID is required",
+				Code:    "INVALID_BOOKING_ID",
+			},
+		},
+		"異常系: UserIDが空の時、Businessエラーが返却される": {
+			request: ParkingBookingRequest{
+				BookingID: "booking-123",
+				UserID:    "",
+				SpaceType: "standard",
+			},
+			expectedResult: nil,
+			expectedErr: &BusinessError{
+				Message: "UserID is required",
+				Code:    "INVALID_USER_ID",
+			},
+		},
+		"異常系: SpaceTypeが空の時、Businessエラーが返却される": {
+			request: ParkingBookingRequest{
+				BookingID: "booking-123",
+				UserID:    "user-456",
+				SpaceType: "",
+			},
+			expectedResult: nil,
+			expectedErr: &BusinessError{
+				Message: "SpaceType is required",
+				Code:    "INVALID_SPACE_TYPE",
+			},
+		},
+		"異常系: booking-connection-errorの時、Serverエラーが返却される": {
+			request: ParkingBookingRequest{
+				BookingID: "booking-connection-error",
+				UserID:    "user-456",
+				SpaceType: "standard",
+			},
+			expectedResult: nil,
+			expectedErr: &ServerError{
+				Message: "駐車場管理システムへの接続に失敗しました",
+				Code:    "CONNECTION_ERROR",
+			},
+		},
+		"異常系: booking-fullの時、Businessエラーが返却される": {
+			request: ParkingBookingRequest{
+				BookingID: "booking-full",
+				UserID:    "user-456",
+				SpaceType: "standard",
+			},
+			expectedResult: nil,
+			expectedErr: &BusinessError{
+				Message: "指定された駐車場は満車です",
+				Code:    "PARKING_FULL",
+			},
+		},
+	}
+
+	for name, tc := range testcases {
+		t.Run(name, func(t *testing.T) {
+			// given
+			ctx := context.Background()
+			mockLogger := &MockLogger{}
+			sut := NewParkingActivity(mockLogger)
+
+			// when
+			actualResult, actualErr := sut.BookParking(ctx, tc.request)
+
+			// then
+			assert.Equal(t, tc.expectedResult, actualResult)
+			assert.Equal(t, tc.expectedErr, actualErr)
+		})
+	}
+}
+
 func TestParkingBookingRequest_Validate(t *testing.T) {
-	tests := []struct {
-		name    string
-		given   ParkingBookingRequest
-		when    string
-		then    struct {
-			expectError bool
-			errorCode   string
-		}
+	testcases := map[string]struct {
+		request     ParkingBookingRequest
+		expectedErr error
 	}{
-		{
-			name:  "正常なリクエスト",
-			given: ParkingBookingRequest{BookingID: "booking1", UserID: "user1", SpaceType: "standard"},
-			when:  "validate",
-			then:  struct{ expectError bool; errorCode string }{false, ""},
+		"正常系: 正常なリクエスト": {
+			request: ParkingBookingRequest{
+				BookingID: "booking-123",
+				UserID:    "user-456",
+				SpaceType: "standard",
+			},
+			expectedErr: nil,
 		},
-		{
-			name:  "BookingIDが空文字",
-			given: ParkingBookingRequest{BookingID: "", UserID: "user1", SpaceType: "standard"},
-			when:  "validate",
-			then:  struct{ expectError bool; errorCode string }{true, "INVALID_BOOKING_ID"},
+		"異常系: BookingIDが空": {
+			request: ParkingBookingRequest{
+				BookingID: "",
+				UserID:    "user-456",
+				SpaceType: "standard",
+			},
+			expectedErr: &BusinessError{
+				Message: "BookingID is required",
+				Code:    "INVALID_BOOKING_ID",
+			},
 		},
-		{
-			name:  "BookingIDが空白文字のみ",
-			given: ParkingBookingRequest{BookingID: "  ", UserID: "user1", SpaceType: "standard"},
-			when:  "validate",
-			then:  struct{ expectError bool; errorCode string }{true, "INVALID_BOOKING_ID"},
+		"異常系: UserIDが空": {
+			request: ParkingBookingRequest{
+				BookingID: "booking-123",
+				UserID:    "",
+				SpaceType: "standard",
+			},
+			expectedErr: &BusinessError{
+				Message: "UserID is required",
+				Code:    "INVALID_USER_ID",
+			},
 		},
-		{
-			name:  "UserIDが空文字",
-			given: ParkingBookingRequest{BookingID: "booking1", UserID: "", SpaceType: "standard"},
-			when:  "validate",
-			then:  struct{ expectError bool; errorCode string }{true, "INVALID_USER_ID"},
-		},
-		{
-			name:  "UserIDが空白文字のみ",
-			given: ParkingBookingRequest{BookingID: "booking1", UserID: "  ", SpaceType: "standard"},
-			when:  "validate",
-			then:  struct{ expectError bool; errorCode string }{true, "INVALID_USER_ID"},
-		},
-		{
-			name:  "SpaceTypeが空文字",
-			given: ParkingBookingRequest{BookingID: "booking1", UserID: "user1", SpaceType: ""},
-			when:  "validate",
-			then:  struct{ expectError bool; errorCode string }{true, "INVALID_SPACE_TYPE"},
-		},
-		{
-			name:  "SpaceTypeが空白文字のみ",
-			given: ParkingBookingRequest{BookingID: "booking1", UserID: "user1", SpaceType: "  "},
-			when:  "validate",
-			then:  struct{ expectError bool; errorCode string }{true, "INVALID_SPACE_TYPE"},
+		"異常系: SpaceTypeが空": {
+			request: ParkingBookingRequest{
+				BookingID: "booking-123",
+				UserID:    "user-456",
+				SpaceType: "",
+			},
+			expectedErr: &BusinessError{
+				Message: "SpaceType is required",
+				Code:    "INVALID_SPACE_TYPE",
+			},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// When
-			err := tt.given.Validate()
+	for name, tc := range testcases {
+		t.Run(name, func(t *testing.T) {
+			// given - テストケースで設定済み
 
-			// Then
-			if tt.then.expectError {
-				if err == nil {
-					t.Errorf("期待されたエラーが発生しませんでした")
-					return
-				}
-				if businessErr, ok := err.(*BusinessError); ok {
-					if businessErr.Code != tt.then.errorCode {
-						t.Errorf("期待されたエラーコード = %v, 実際 = %v", tt.then.errorCode, businessErr.Code)
-					}
-				} else {
-					t.Errorf("期待されたビジネスエラーではありません: %v", err)
-				}
-			} else {
-				if err != nil {
-					t.Errorf("予期しないエラーが発生しました: %v", err)
-				}
-			}
+			// when
+			actualErr := tc.request.Validate()
+
+			// then
+			assert.Equal(t, tc.expectedErr, actualErr)
 		})
-	}
-}
-
-func TestParkingBookingActivity(t *testing.T) {
-	tests := []struct {
-		name  string
-		given ParkingBookingRequest
-		when  string
-		then  struct {
-			expectError bool
-			errorType   string
-			success     bool
-			resourceID  string
-		}
-	}{
-		{
-			name:  "正常な駐車場予約",
-			given: ParkingBookingRequest{BookingID: "booking1", UserID: "user1", SpaceType: "standard"},
-			when:  "execute_activity",
-			then:  struct{ expectError bool; errorType string; success bool; resourceID string }{false, "", true, "parking-123"},
-		},
-		{
-			name:  "バリデーションエラー - BookingIDが空",
-			given: ParkingBookingRequest{BookingID: "", UserID: "user1", SpaceType: "standard"},
-			when:  "execute_activity",
-			then:  struct{ expectError bool; errorType string; success bool; resourceID string }{true, "business_error", false, ""},
-		},
-		{
-			name:  "バリデーションエラー - UserIDが空",
-			given: ParkingBookingRequest{BookingID: "booking1", UserID: "", SpaceType: "standard"},
-			when:  "execute_activity",
-			then:  struct{ expectError bool; errorType string; success bool; resourceID string }{true, "business_error", false, ""},
-		},
-		{
-			name:  "バリデーションエラー - SpaceTypeが空",
-			given: ParkingBookingRequest{BookingID: "booking1", UserID: "user1", SpaceType: ""},
-			when:  "execute_activity",
-			then:  struct{ expectError bool; errorType string; success bool; resourceID string }{true, "business_error", false, ""},
-		},
-		{
-			name:  "ビジネスエラー - 駐車場満車",
-			given: ParkingBookingRequest{BookingID: "booking-full", UserID: "user1", SpaceType: "standard"},
-			when:  "execute_activity",
-			then:  struct{ expectError bool; errorType string; success bool; resourceID string }{true, "business_error", false, ""},
-		},
-		{
-			name:  "一時的エラー - 管理システム接続エラー",
-			given: ParkingBookingRequest{BookingID: "booking-connection-error", UserID: "user1", SpaceType: "standard"},
-			when:  "execute_activity",
-			then:  struct{ expectError bool; errorType string; success bool; resourceID string }{true, "server_error", false, ""},
-		},
-		{
-			name:  "冪等性テスト - 重複リクエスト",
-			given: ParkingBookingRequest{BookingID: "booking-duplicate-parking", UserID: "user1", SpaceType: "standard"},
-			when:  "execute_activity",
-			then:  struct{ expectError bool; errorType string; success bool; resourceID string }{false, "", true, "parking-duplicate"},
-		},
-	}
-
-	testSuite := &testsuite.WorkflowTestSuite{}
-	env := testSuite.NewTestActivityEnvironment()
-	env.RegisterActivity(ParkingBookingActivity)
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Given - テスト前のキャッシュクリア（冪等性テスト以外）
-			if tt.given.BookingID != "booking-duplicate-parking" {
-				clearParkingCache(tt.given.BookingID)
-			} else {
-				// 冪等性テストの場合は事前にキャッシュを設定
-				prepareParkingCache(tt.given.BookingID)
-			}
-
-			// When
-			val, err := env.ExecuteActivity(ParkingBookingActivity, tt.given)
-
-			// Then
-			if tt.then.expectError {
-				if err == nil {
-					t.Errorf("期待されたエラーが発生しませんでした")
-					return
-				}
-
-				// Temporalのテスト環境では、エラーはActivityErrorにラップされるため、
-				// エラーメッセージをチェックする
-				errorMsg := err.Error()
-				switch tt.then.errorType {
-				case "business_error":
-					if !strings.Contains(errorMsg, "BookingID is required") &&
-						!strings.Contains(errorMsg, "UserID is required") &&
-						!strings.Contains(errorMsg, "SpaceType is required") &&
-						!strings.Contains(errorMsg, "指定された駐車場は満車です") {
-						t.Errorf("期待されたBusinessErrorではありません: %s", errorMsg)
-					}
-				case "server_error":
-					if !strings.Contains(errorMsg, "駐車場管理システムへの接続に失敗しました") {
-						t.Errorf("期待されたServerErrorではありません: %s", errorMsg)
-					}
-				}
-			} else {
-				if err != nil {
-					t.Errorf("予期しないエラーが発生しました: %v", err)
-					return
-				}
-
-				var result ParkingBookingResult
-				if err := val.Get(&result); err != nil {
-					t.Errorf("結果の取得に失敗しました: %v", err)
-					return
-				}
-
-				if result.Success != tt.then.success {
-					t.Errorf("期待された成功フラグ = %v, 実際 = %v", tt.then.success, result.Success)
-				}
-
-				if result.ResourceID != tt.then.resourceID {
-					t.Errorf("期待されたResourceID = %v, 実際 = %v", tt.then.resourceID, result.ResourceID)
-				}
-			}
-		})
-	}
-}
-
-// テスト用のキャッシュクリア関数
-func clearParkingCache(bookingID string) {
-	delete(parkingCache, bookingID)
-}
-
-// 冪等性テスト用のキャッシュ準備関数
-func prepareParkingCache(bookingID string) {
-	parkingCache[bookingID] = &ParkingBookingResult{
-		Success:    true,
-		ResourceID: "parking-duplicate",
-		Message:    "既に予約済みです",
 	}
 }

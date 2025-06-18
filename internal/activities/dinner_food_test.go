@@ -7,17 +7,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// MockLogger テスト用のモックロガー
-type MockLogger struct{}
-
-func (m *MockLogger) Info(msg string, keysAndValues ...interface{}) {
-	// テストでは何もしない
-}
-
-func (m *MockLogger) Error(msg string, keysAndValues ...interface{}) {
-	// テストでは何もしない
-}
-
 // テストケースについて
 // 正常系:
 //   - 正常なリクエストがされた場合、予約処理が完了する

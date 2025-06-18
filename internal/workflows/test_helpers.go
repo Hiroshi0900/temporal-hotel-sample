@@ -417,9 +417,9 @@ func (a *WorkflowResultAssertions) AssertAllExpectations(expectations ScenarioEx
 
 // よく使用されるエラー定義
 var (
-	OutOfStockError       = &activities.BusinessError{Message: "指定されたメニューの食材が在庫不足です"}
-	HotelFullError        = &activities.BusinessError{Message: "指定されたホテルは満室です"}
-	ParkingFullError      = &activities.BusinessError{Message: "指定された駐車場は満車です"}
-	CompensationError     = &activities.ServerError{Message: "補償処理で一時的エラーが発生しました"}
-	SystemDownError       = &activities.ServerError{Message: "補償処理システムがダウンしています"}
+	OutOfStockError   = &activities.BusinessError{Message: "指定されたメニューの食材が在庫不足です"}
+	HotelFullError    = &activities.BusinessError{Message: "指定されたホテルは満室です"}
+	ParkingFullError  = &activities.BusinessError{Message: "指定された駐車場は満車です"}
+	CompensationError = &activities.ServerError{Message: "補償処理で一時的エラーが発生しました"}
+	SystemDownError   = &activities.ServerError{Message: "補償処理システムがダウンしています"}
 )

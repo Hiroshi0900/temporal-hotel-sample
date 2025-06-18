@@ -96,10 +96,10 @@ func (a *ParkingActivity) BookParking(ctx context.Context, req ParkingBookingReq
 			ResourceID: "parking-123", // 実際のシステムでは動的に生成
 			Message:    "駐車場予約が完了しました",
 		}
-		
+
 		// キャッシュに保存（冪等性保証）
 		parkingCache[req.BookingID] = result
-		
+
 		a.logger.Info("駐車場予約が完了", "BookingID", req.BookingID, "ResourceID", result.ResourceID)
 		return result, nil
 	}
